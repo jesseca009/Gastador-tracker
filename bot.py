@@ -52,7 +52,7 @@ FREE_LIMIT = 20
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [[KeyboardButton("➕ Add Expense"), KeyboardButton("📊 My Spending"), KeyboardButton("📤 Export")]],
     resize_keyboard=True,
-    persistent=True
+    is_persistent=True
 )
 
 def get_wallet_keyboard(include_back=True):
