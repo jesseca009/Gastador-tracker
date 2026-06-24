@@ -692,12 +692,35 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Cancelled.", reply_markup=MAIN_KEYBOARD)
     return ConversationHandler.END
 
+# Callback data that should NOT start/continue a conversation — these are
+# one-shot navigation/read actions handled by their own top-level handler.
+NAV_PATTERN = (
+    "^(back_main|view_today|view_week|view_month|back_spending|"
+    "export_today|export_week|export_month)$"
+)
+# Callback data that STARTS a conversation flow (needs follow-up input).
+ENTRY_PATTERN = "^(add_receipt|add_manual|view_pick|export_pick)$"
+
+async def nav_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # User tapped a navigation button while a conversation was active:
+    # run the action and end the conversation cleanly.
+    context.user_data.clear()
+    await handle_callback(update, context)
+    return ConversationHandler.END
+
+async def menu_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # User tapped a main-menu button mid-conversation: reset and show the menu.
+    context.user_data.clear()
+    await handle_message(update, context)
+    return ConversationHandler.END
+
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     conv_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(handle_callback)
+            # Only the buttons that actually start a flow may begin a conversation.
+            CallbackQueryHandler(handle_callback, pattern=ENTRY_PATTERN)
         ],
         states={
             WAITING_FOR_RECEIPT: [MessageHandler(filters.PHOTO, handle_receipt_photo)],
@@ -714,13 +737,23 @@ def main():
             HISTORY_PICK_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, history_pick_date)],
             EXPORT_PICK_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, export_pick_date)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("start", start),
+            # Let navigation / main-menu taps break out of a conversation cleanly.
+            CallbackQueryHandler(nav_fallback, pattern=NAV_PATTERN),
+            MessageHandler(filters.Regex("^(➕ Add Expense|📊 My Spending|📤 Export)$"), menu_fallback),
+        ],
         per_message=False
     )
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # Conversation first, so its active text states receive input before the
+    # generic text handler below can swallow it.
     app.add_handler(conv_handler)
+    # One-shot navigation buttons, handled outside any conversation.
+    app.add_handler(CallbackQueryHandler(handle_callback, pattern=NAV_PATTERN))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("GastadorTrackerBot is running!")
     app.run_polling()
