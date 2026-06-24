@@ -11,6 +11,12 @@ A Telegram bot to track your daily expenses across GCash, Maya, Credit Card, and
 | SUPABASE_KEY | Your Supabase anon key |
 | ANTHROPIC_KEY | Your Anthropic API key |
 
+## Database Setup
+
+Before running the bot, create the required tables in Supabase:
+run [`schema.sql`](schema.sql) in the Supabase SQL Editor. It creates the
+`users` and `expenses` tables and is safe to re-run.
+
 ## Features
 - 📸 Receipt photo reading via AI
 - ✏️ Manual expense entry
