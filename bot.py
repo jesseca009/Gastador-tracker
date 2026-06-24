@@ -230,6 +230,17 @@ def get_date_expenses(user_id, date_str):
     result = supabase.table("expenses").select("*").eq("user_id", user_id).eq("date", date_str).order("time").execute()
     return result.data
 
+def spending_summary_text(user_id):
+    today_total = sum(float(e["amount"]) for e in get_today_expenses(user_id))
+    month_total = sum(float(e["amount"]) for e in get_month_expenses(user_id))
+    month_name = datetime.now().strftime("%B")
+    return (
+        f"📊 My Spending\n\n"
+        f"📅 Today: ₱{today_total:,.2f}\n"
+        f"🗓️ {month_name} total: ₱{month_total:,.2f}\n\n"
+        f"Pick a view below:"
+    )
+
 def format_expense_list(expenses, title):
     if not expenses:
         return f"{title}\n\nNo expenses recorded. 🎉"
@@ -374,10 +385,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("How do you want to add it?", reply_markup=keyboard)
 
     elif text == "📊 My Spending":
-        today_expenses = get_today_expenses(user.id)
-        today_total = sum(float(e["amount"]) for e in today_expenses)
         await update.message.reply_text(
-            f"📊 My Spending\n💸 Today's Total: ₱{today_total:,.2f}",
+            spending_summary_text(user.id),
             reply_markup=get_spending_keyboard()
         )
 
@@ -510,10 +519,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return HISTORY_PICK_DATE
 
     if data == "back_spending":
-        today_expenses = get_today_expenses(user.id)
-        today_total = sum(float(e["amount"]) for e in today_expenses)
         await query.edit_message_text(
-            f"📊 My Spending\n💸 Today's Total: ₱{today_total:,.2f}",
+            spending_summary_text(user.id),
             reply_markup=get_spending_keyboard()
         )
 
