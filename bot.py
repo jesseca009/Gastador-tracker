@@ -239,10 +239,10 @@ def format_expense_list(expenses, title):
     lines = [f"{title}\n"]
 
     for i, e in enumerate(expenses, 1):
-        wallet_display = format_wallet_display(e["wallet"], e.get("wallet_detail"))
-        time_str = e["time"][:5] if e["time"] else ""
-        lines.append(f"{i}. {e['merchant']}  ₱{float(e['amount']):,.2f}  {wallet_display}  {time_str}")
-        wkey = e.get("wallet_detail") or e["wallet"]
+        wallet_display = format_wallet_display(e.get("wallet"), e.get("wallet_detail"))
+        time_str = e["time"][:5] if e.get("time") else ""
+        lines.append(f"{i}. {e.get('merchant', '')}  ₱{float(e['amount']):,.2f}  {wallet_display}  {time_str}")
+        wkey = e.get("wallet_detail") or e.get("wallet") or "Other"
         wallet_totals[wkey] = wallet_totals.get(wkey, 0) + float(e["amount"])
 
     lines.append("─────────────────────────")
@@ -272,7 +272,7 @@ def format_week_summary(expenses):
 
     wallet_totals = {}
     for e in expenses:
-        wkey = e.get("wallet_detail") or e["wallet"]
+        wkey = e.get("wallet_detail") or e.get("wallet") or "Other"
         wallet_totals[wkey] = wallet_totals.get(wkey, 0) + float(e["amount"])
 
     lines.append("─────────────────────────")
@@ -298,7 +298,7 @@ def format_month_summary(expenses):
 
     wallet_totals = {}
     for e in expenses:
-        wkey = e.get("wallet_detail") or e["wallet"]
+        wkey = e.get("wallet_detail") or e.get("wallet") or "Other"
         wallet_totals[wkey] = wallet_totals.get(wkey, 0) + float(e["amount"])
 
     lines.append("─────────────────────────")
@@ -698,6 +698,12 @@ NAV_PATTERN = (
     "^(back_main|view_today|view_week|view_month|back_spending|"
     "export_today|export_week|export_month)$"
 )
+# Read-only view buttons. These never appear inside a conversation flow, so they
+# are handled FIRST — they always respond even if a stale conversation lingers.
+VIEW_PATTERN = (
+    "^(view_today|view_week|view_month|back_spending|"
+    "export_today|export_week|export_month)$"
+)
 # Callback data that STARTS a conversation flow (needs follow-up input).
 ENTRY_PATTERN = "^(add_receipt|add_manual|view_pick|export_pick)$"
 
@@ -752,11 +758,14 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
-    # Conversation first, so its active text states receive input before the
+    # Read-only view/export buttons first, so they always respond even if a
+    # stale conversation is still active for this user.
+    app.add_handler(CallbackQueryHandler(handle_callback, pattern=VIEW_PATTERN))
+    # Conversation next, so its active text states receive input before the
     # generic text handler below can swallow it.
     app.add_handler(conv_handler)
-    # One-shot navigation buttons, handled outside any conversation.
-    app.add_handler(CallbackQueryHandler(handle_callback, pattern=NAV_PATTERN))
+    # "Back to main" outside of any conversation.
+    app.add_handler(CallbackQueryHandler(handle_callback, pattern="^back_main$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
