@@ -184,12 +184,15 @@ def format_wallet_display(wallet, wallet_detail=None):
 
 def format_expense_confirmation(data):
     wallet_display = format_wallet_display(data.get("wallet"), data.get("wallet_detail"))
+    date_line = f"📅 Date:     {data['date']}"
+    if data.get("date_assumed"):
+        date_line += "  ⚠️ no date on receipt — tap ✏️ Edit if wrong"
     return (
         f"Here's what I found:\n\n"
         f"💸 Amount:   ₱{float(data['amount']):,.2f}\n"
         f"🏪 Where:    {data['merchant']}\n"
         f"💳 Paid via: {wallet_display}\n"
-        f"📅 Date:     {data['date']}\n"
+        f"{date_line}\n"
         f"🕐 Time:     {data['time']}\n\n"
         f"Is this correct?"
     )
@@ -232,13 +235,33 @@ async def read_receipt(image_bytes):
             data[key.strip()] = val.strip()
 
     now = now_ph()
+
+    # Date: accept only a valid YYYY-MM-DD. Anything missing/blank/UNKNOWN or
+    # malformed falls back to today, and we flag it so the user can correct it.
+    raw_date = (data.get("DATE") or "").strip()
+    try:
+        datetime.strptime(raw_date, "%Y-%m-%d")
+        date_val, date_assumed = raw_date, False
+    except ValueError:
+        date_val, date_assumed = now.strftime("%Y-%m-%d"), True
+
+    # Time: accept only a valid HH:MM:SS, otherwise use now.
+    raw_time = (data.get("TIME") or "").strip()
+    try:
+        datetime.strptime(raw_time, "%H:%M:%S")
+        time_val = raw_time
+    except ValueError:
+        time_val = now.strftime("%H:%M:%S")
+
+    wallet_detail = data.get("WALLET_DETAIL")
     return {
         "amount": data.get("AMOUNT", "0"),
         "merchant": data.get("MERCHANT", "Unknown"),
         "wallet": data.get("WALLET", "Cash"),
-        "wallet_detail": data.get("WALLET_DETAIL") if data.get("WALLET_DETAIL") != "NONE" else None,
-        "date": data.get("DATE") if data.get("DATE") != "UNKNOWN" else now.strftime("%Y-%m-%d"),
-        "time": data.get("TIME") if data.get("TIME") != "UNKNOWN" else now.strftime("%H:%M:%S"),
+        "wallet_detail": wallet_detail if wallet_detail not in (None, "", "NONE") else None,
+        "date": date_val,
+        "time": time_val,
+        "date_assumed": date_assumed,
     }
 
 # Spending views
@@ -702,6 +725,7 @@ async def edit_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         d = datetime.strptime(update.message.text.strip(), "%Y-%m-%d")
         context.user_data["date"] = d.strftime("%Y-%m-%d")
+        context.user_data["date_assumed"] = False
         await update.message.reply_text(
             format_expense_confirmation(context.user_data),
             reply_markup=get_confirm_keyboard()
