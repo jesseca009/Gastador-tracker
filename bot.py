@@ -483,7 +483,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 "⚠️ You've reached your 20 free expenses this month.\n\n"
                 "Upgrade to Pro for ₱99/month — unlimited tracking!\n"
-                "Contact @YourUsername to upgrade."
+                "Contact @waxngcrsnt to upgrade."
             )
             return ConversationHandler.END
         context.user_data["entry_type"] = "receipt"
@@ -495,7 +495,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 "⚠️ You've reached your 20 free expenses this month.\n\n"
                 "Upgrade to Pro for ₱99/month — unlimited tracking!\n"
-                "Contact @YourUsername to upgrade."
+                "Contact @waxngcrsnt to upgrade."
             )
             return ConversationHandler.END
         context.user_data["entry_type"] = "manual"
