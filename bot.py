@@ -128,11 +128,25 @@ def increment_count(telegram_id):
     user = get_user(telegram_id)
     supabase.table("users").update({"transaction_count": user["transaction_count"] + 1}).eq("id", telegram_id).execute()
 
+def count_this_month(telegram_id):
+    # Number of expenses logged in the current calendar month (PH time). Used
+    # for the free-tier limit so it resets automatically each month and stays
+    # correct after /undo, instead of relying on a counter that never resets.
+    month_start = now_ph().replace(day=1).strftime("%Y-%m-%d")
+    result = (
+        supabase.table("expenses")
+        .select("id", count="exact")
+        .eq("user_id", telegram_id)
+        .gte("created_at", month_start)
+        .execute()
+    )
+    return result.count if result.count is not None else len(result.data)
+
 def check_limit(telegram_id):
     user = get_user(telegram_id)
-    if user["is_pro"]:
+    if user and user["is_pro"]:
         return True
-    return user["transaction_count"] < FREE_LIMIT
+    return count_this_month(telegram_id) < FREE_LIMIT
 
 def save_expense(user_id, amount, merchant, wallet, wallet_detail, date, time, entry_type):
     supabase.table("expenses").insert({
