@@ -1,6 +1,6 @@
 import os
 import logging
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes, ConversationHandler
@@ -738,8 +738,17 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     # Surface any handler exception in the logs instead of silently failing a tap.
     logger.error("Exception while handling an update:", exc_info=context.error)
 
+async def post_init(application):
+    # Register the command menu so key actions are reachable from the input
+    # bar (☰) even while the user is typing.
+    await application.bot.set_my_commands([
+        BotCommand("start", "Start and see the welcome"),
+        BotCommand("help", "How to use the bot"),
+        BotCommand("undo", "Delete your last entry"),
+    ])
+
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
 
     conv_handler = ConversationHandler(
         entry_points=[
