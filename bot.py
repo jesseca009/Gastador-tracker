@@ -5,7 +5,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes, ConversationHandler
 )
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import anthropic
 from supabase import create_client
 import base64
@@ -17,6 +17,13 @@ import tempfile
 # Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Philippine Standard Time (UTC+8, no daylight saving). The server runs in UTC,
+# so all "current time" reads must go through this to log correct local times.
+PH_TZ = timezone(timedelta(hours=8))
+
+def now_ph():
+    return datetime.now(PH_TZ)
 
 # Environment variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -197,7 +204,7 @@ async def read_receipt(image_bytes):
             key, val = line.split(":", 1)
             data[key.strip()] = val.strip()
 
-    now = datetime.now()
+    now = now_ph()
     return {
         "amount": data.get("AMOUNT", "0"),
         "merchant": data.get("MERCHANT", "Unknown"),
@@ -209,19 +216,19 @@ async def read_receipt(image_bytes):
 
 # Spending views
 def get_today_expenses(user_id):
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = now_ph().strftime("%Y-%m-%d")
     result = supabase.table("expenses").select("*").eq("user_id", user_id).eq("date", today).order("time").execute()
     return result.data
 
 def get_week_expenses(user_id):
     from datetime import timedelta
-    today = datetime.now().date()
+    today = now_ph().date()
     week_start = today - timedelta(days=today.weekday())
     result = supabase.table("expenses").select("*").eq("user_id", user_id).gte("date", str(week_start)).lte("date", str(today)).order("date").execute()
     return result.data
 
 def get_month_expenses(user_id):
-    today = datetime.now()
+    today = now_ph()
     month_start = today.replace(day=1).strftime("%Y-%m-%d")
     result = supabase.table("expenses").select("*").eq("user_id", user_id).gte("date", month_start).lte("date", today.strftime("%Y-%m-%d")).order("date").execute()
     return result.data
@@ -233,7 +240,7 @@ def get_date_expenses(user_id, date_str):
 def spending_summary_text(user_id):
     today_total = sum(float(e["amount"]) for e in get_today_expenses(user_id))
     month_total = sum(float(e["amount"]) for e in get_month_expenses(user_id))
-    month_name = datetime.now().strftime("%B")
+    month_name = now_ph().strftime("%B")
     return (
         f"📊 My Spending\n\n"
         f"📅 Today: ₱{today_total:,.2f}\n"
@@ -266,7 +273,7 @@ def format_expense_list(expenses, title):
 
 def format_week_summary(expenses):
     from datetime import timedelta
-    today = datetime.now().date()
+    today = now_ph().date()
     week_start = today - timedelta(days=today.weekday())
     days = {}
     for e in expenses:
@@ -294,7 +301,7 @@ def format_week_summary(expenses):
 
 def format_month_summary(expenses):
     from datetime import timedelta
-    today = datetime.now()
+    today = now_ph()
     lines = [f"🗓️ This Month — {today.strftime('%B %Y')}\n"]
 
     weeks = {}
@@ -444,7 +451,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return MANUAL_WALLET_DETAIL
         else:
             context.user_data["wallet_detail"] = None
-            now = datetime.now()
+            now = now_ph()
             if "date" not in context.user_data:
                 context.user_data["date"] = now.strftime("%Y-%m-%d")
             if "time" not in context.user_data:
@@ -500,7 +507,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Spending views
     if data == "view_today":
         expenses = get_today_expenses(user.id)
-        today = datetime.now().strftime("%B %d, %Y")
+        today = now_ph().strftime("%B %d, %Y")
         msg = format_expense_list(expenses, f"📅 Today — {today}")
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_spending")]]))
 
@@ -528,13 +535,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data in ["export_today", "export_week", "export_month"]:
         if data == "export_today":
             expenses = get_today_expenses(user.id)
-            title = f"Today {datetime.now().strftime('%b %d %Y')}"
+            title = f"Today {now_ph().strftime('%b %d %Y')}"
         elif data == "export_week":
             expenses = get_week_expenses(user.id)
             title = f"This Week"
         else:
             expenses = get_month_expenses(user.id)
-            title = f"{datetime.now().strftime('%B %Y')}"
+            title = f"{now_ph().strftime('%B %Y')}"
 
         if not expenses:
             await query.edit_message_text("No expenses to export for this period.")
@@ -595,7 +602,7 @@ async def manual_merchant(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def manual_wallet_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["wallet_detail"] = update.message.text
-    now = datetime.now()
+    now = now_ph()
     if "date" not in context.user_data:
         context.user_data["date"] = now.strftime("%Y-%m-%d")
     if "time" not in context.user_data:
@@ -649,7 +656,7 @@ async def history_pick_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 d = datetime.strptime(text, fmt)
                 if fmt in ["%B %d", "%b %d"]:
-                    d = d.replace(year=datetime.now().year)
+                    d = d.replace(year=now_ph().year)
                 date_str = d.strftime("%Y-%m-%d")
                 expenses = get_date_expenses(update.effective_user.id, date_str)
                 msg = format_expense_list(expenses, f"📅 {d.strftime('%B %d, %Y')}")
@@ -670,7 +677,7 @@ async def export_pick_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 d = datetime.strptime(text, fmt)
                 if fmt in ["%B %d", "%b %d"]:
-                    d = d.replace(year=datetime.now().year)
+                    d = d.replace(year=now_ph().year)
                 date_str = d.strftime("%Y-%m-%d")
                 expenses = get_date_expenses(update.effective_user.id, date_str)
                 if not expenses:
