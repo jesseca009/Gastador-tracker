@@ -147,6 +147,19 @@ def save_expense(user_id, amount, merchant, wallet, wallet_detail, date, time, e
     }).execute()
     increment_count(user_id)
 
+def decrement_count(telegram_id):
+    user = get_user(telegram_id)
+    if user:
+        new_count = max(0, user["transaction_count"] - 1)
+        supabase.table("users").update({"transaction_count": new_count}).eq("id", telegram_id).execute()
+
+def get_last_expense(user_id):
+    result = supabase.table("expenses").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(1).execute()
+    return result.data[0] if result.data else None
+
+def delete_expense(expense_id):
+    supabase.table("expenses").delete().eq("id", expense_id).execute()
+
 def format_wallet_display(wallet, wallet_detail=None):
     icons = {"Cash": "💵", "GCash": "💚", "Maya": "💜", "CreditCard": "💳", "OtherBanks": "🏦"}
     icon = icons.get(wallet, "💳")
@@ -375,6 +388,42 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Hi {user.first_name}! 🎯 Know where your money goes, take control of your day.\n\n"
         f"Use the buttons below to get started:",
+        reply_markup=MAIN_KEYBOARD
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📖 How to use GastadorTracker\n\n"
+        "➕ Add Expense — log a new expense\n"
+        "   📸 Receipt Photo: send a photo and I'll read it\n"
+        "   ✏️ Manual Entry: type the amount, merchant and wallet\n\n"
+        "📊 My Spending — totals for today, this week, this month, or a date you pick\n\n"
+        "📤 Export — download your expenses as an Excel file\n\n"
+        "Commands:\n"
+        "/start — show the welcome & menu\n"
+        "/undo — delete your most recent entry\n"
+        "/help — show this message\n\n"
+        "💡 Tip: the buttons below are always available.",
+        reply_markup=MAIN_KEYBOARD
+    )
+
+async def undo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    get_or_create_user(user.id, user.username, user.first_name)
+    last = get_last_expense(user.id)
+    if not last:
+        await update.message.reply_text(
+            "Nothing to undo — you haven't logged any expenses yet.",
+            reply_markup=MAIN_KEYBOARD
+        )
+        return
+    delete_expense(last["id"])
+    decrement_count(user.id)
+    wallet_display = format_wallet_display(last.get("wallet"), last.get("wallet_detail"))
+    await update.message.reply_text(
+        "🗑️ Deleted your last entry:\n\n"
+        f"💸 ₱{float(last['amount']):,.2f} at {last.get('merchant', '')}\n"
+        f"💳 {wallet_display}  •  📅 {last['date']}",
         reply_markup=MAIN_KEYBOARD
     )
 
@@ -781,6 +830,8 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("undo", undo_command))
     # Read-only view/export buttons first, so they always respond even if a
     # stale conversation is still active for this user.
     app.add_handler(CallbackQueryHandler(handle_callback, pattern=VIEW_PATTERN))
