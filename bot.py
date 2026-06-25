@@ -298,9 +298,9 @@ def spending_summary_text(user_id):
         f"Pick a view below:"
     )
 
-def format_expense_list(expenses, title):
+def format_expense_list(expenses, title, period="this period"):
     if not expenses:
-        return f"{title}\n\nNo expenses recorded. 🎉"
+        return f"No expenses recorded yet for {period}. 🎉"
 
     total = sum(float(e["amount"]) for e in expenses)
     wallet_totals = {}
@@ -322,6 +322,8 @@ def format_expense_list(expenses, title):
     return "\n".join(lines)
 
 def format_week_summary(expenses):
+    if not expenses:
+        return "No expenses recorded yet for this week. 🎉"
     from datetime import timedelta
     today = now_ph().date()
     week_start = today - timedelta(days=today.weekday())
@@ -350,6 +352,8 @@ def format_week_summary(expenses):
     return "\n".join(lines)
 
 def format_month_summary(expenses):
+    if not expenses:
+        return "No expenses recorded yet for this month. 🎉"
     from datetime import timedelta
     today = now_ph()
     lines = [f"🗓️ This Month — {today.strftime('%B %Y')}\n"]
@@ -423,8 +427,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     get_or_create_user(user.id, user.username, user.first_name)
     await update.message.reply_text(
-        f"Hi {user.first_name}! 🎯 Know where your money goes, take control of your day.\n\n"
-        f"Use the buttons below to get started:",
+        f"Hi {user.first_name}! 👋\n"
+        "GastadorTracker helps you keep track of what you spend, so you always know where your money goes.\n"
+        "To add an expense, always start by tapping ➕ Add Expense below. Then choose:\n\n"
+        "📸 Receipt Photo — send a photo and I'll read it for you\n\n"
+        "✏️ Manual Entry — type it in yourself\n"
+        "That's it — I'll record it. To see your spending anytime, tap 📊 My Spending.\n"
+        "Your records are private and saved safely.",
         reply_markup=MAIN_KEYBOARD
     )
 
@@ -454,14 +463,17 @@ async def undo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=MAIN_KEYBOARD
         )
         return
-    delete_expense(last["id"])
-    decrement_count(user.id)
+    # Confirm before deleting, rather than removing it silently.
+    context.user_data["undo_expense_id"] = last["id"]
     wallet_display = format_wallet_display(last.get("wallet"), last.get("wallet_detail"))
     await update.message.reply_text(
-        "🗑️ Deleted your last entry:\n\n"
+        "🗑️ Delete this entry?\n\n"
         f"💸 ₱{float(last['amount']):,.2f} at {last.get('merchant', '')}\n"
         f"💳 {wallet_display}  •  📅 {last['date']}",
-        reply_markup=MAIN_KEYBOARD
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, delete", callback_data="undo_confirm"),
+             InlineKeyboardButton("❌ Keep it", callback_data="undo_cancel")]
+        ])
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -489,6 +501,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_export_keyboard()
         )
 
+    else:
+        await update.message.reply_text(
+            "I didn't quite get that. 🙂\n"
+            "Use the buttons below — tap ➕ Add Expense to log spending, "
+            "or 📊 My Spending to see your totals.",
+            reply_markup=MAIN_KEYBOARD
+        )
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -499,6 +519,44 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "back_main":
         await query.edit_message_text("Use the buttons below:", reply_markup=None)
         return ConversationHandler.END
+
+    # /undo confirmation
+    if data == "undo_confirm":
+        expense_id = context.user_data.pop("undo_expense_id", None)
+        if not expense_id:
+            await query.edit_message_text("Nothing to delete.")
+            return
+        delete_expense(expense_id)
+        decrement_count(user.id)
+        await query.edit_message_text("🗑️ Deleted — that entry has been removed.")
+        return
+    if data == "undo_cancel":
+        context.user_data.pop("undo_expense_id", None)
+        await query.edit_message_text("👍 Kept it — nothing was deleted.")
+        return
+
+    # Photo-first safety net: user sent a photo outside the Add Expense flow.
+    if data == "stray_photo_no":
+        context.user_data.pop("pending_photo_file_id", None)
+        await query.edit_message_text("No problem — I didn't save anything. 👍")
+        return
+    if data == "stray_photo_yes":
+        file_id = context.user_data.get("pending_photo_file_id")
+        if not file_id:
+            await query.edit_message_text("That photo expired — please send it again.")
+            return ConversationHandler.END
+        if not check_limit(user.id):
+            await query.edit_message_text(
+                "⚠️ You've reached your 20 free expenses this month.\n\n"
+                "Upgrade to Pro for ₱99/month — unlimited tracking!\n"
+                "Contact @waxngcrsnt to upgrade."
+            )
+            return ConversationHandler.END
+        await query.edit_message_text("Got it! Reading your receipt... ⏳")
+        file = await context.bot.get_file(file_id)
+        image_bytes = await file.download_as_bytearray()
+        context.user_data.pop("pending_photo_file_id", None)
+        return await deliver_receipt_result(query.message, context, image_bytes)
 
     # Add expense
     if data == "add_receipt":
@@ -594,7 +652,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "view_today":
         expenses = get_today_expenses(user.id)
         today = now_ph().strftime("%B %d, %Y")
-        msg = format_expense_list(expenses, f"📅 Today — {today}")
+        msg = format_expense_list(expenses, f"📅 Today — {today}", period="today")
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_spending")]]))
 
     if data == "view_week":
@@ -648,27 +706,45 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Which date do you want to export?\nType it like this: June 10")
         return EXPORT_PICK_DATE
 
-async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Got it! Reading your receipt... ⏳")
-    photo = update.message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
-    image_bytes = await file.download_as_bytearray()
-
+async def deliver_receipt_result(message, context, image_bytes):
+    # Shared by the deliberate Receipt Photo flow and the photo-first safety net:
+    # read the image and show the existing confirm/edit/save screen. Returns the
+    # next conversation state so callers can route into CONFIRM_EXPENSE.
     try:
         data = await read_receipt(bytes(image_bytes))
         context.user_data.update(data)
-        await update.message.reply_text(
+        context.user_data["entry_type"] = "receipt"
+        await message.reply_text(
             format_expense_confirmation(context.user_data),
             reply_markup=get_confirm_keyboard()
         )
         return CONFIRM_EXPENSE
     except Exception as e:
         logger.error(f"Receipt read error: {e}")
-        await update.message.reply_text(
-            "Sorry, I couldn't read that receipt. Try Manual Entry instead.",
+        await message.reply_text(
+            "Sorry, I couldn't read that as a receipt. Try Manual Entry instead.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✏️ Manual Entry", callback_data="add_manual"), InlineKeyboardButton("🔙 Back", callback_data="back_main")]])
         )
         return ConversationHandler.END
+
+async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Got it! Reading your receipt... ⏳")
+    photo = update.message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+    image_bytes = await file.download_as_bytearray()
+    return await deliver_receipt_result(update.message, context, image_bytes)
+
+async def handle_unexpected_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # A photo arrived outside the deliberate Add Expense → Receipt Photo flow.
+    # Gently offer to read it instead of ignoring it.
+    context.user_data["pending_photo_file_id"] = update.message.photo[-1].file_id
+    await update.message.reply_text(
+        "📸 Looks like a receipt! Want me to record this as an expense?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, read it", callback_data="stray_photo_yes"),
+             InlineKeyboardButton("❌ No", callback_data="stray_photo_no")]
+        ])
+    )
 
 # Manual entry states
 async def manual_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -678,7 +754,7 @@ async def manual_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Where did you spend it?\n(e.g. Jollibee, Mercury Drug)")
         return MANUAL_MERCHANT
     except:
-        await update.message.reply_text("Please enter a valid amount (numbers only, e.g. 185):")
+        await update.message.reply_text("Please enter a valid amount in numbers, e.g. 185.")
         return MANUAL_AMOUNT
 
 async def manual_merchant(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -746,7 +822,7 @@ async def history_pick_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     d = d.replace(year=now_ph().year)
                 date_str = d.strftime("%Y-%m-%d")
                 expenses = get_date_expenses(update.effective_user.id, date_str)
-                msg = format_expense_list(expenses, f"📅 {d.strftime('%B %d, %Y')}")
+                msg = format_expense_list(expenses, f"📅 {d.strftime('%B %d, %Y')}", period=d.strftime('%B %d, %Y'))
                 await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_spending")]]))
                 return ConversationHandler.END
             except:
@@ -806,7 +882,8 @@ VIEW_PATTERN = (
     "export_today|export_week|export_month)$"
 )
 # Callback data that STARTS a conversation flow (needs follow-up input).
-ENTRY_PATTERN = "^(add_receipt|add_manual|view_pick|export_pick)$"
+# stray_photo_yes enters the same receipt flow from the photo-first safety net.
+ENTRY_PATTERN = "^(add_receipt|add_manual|view_pick|export_pick|stray_photo_yes)$"
 
 async def nav_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # User tapped a navigation button while a conversation was active:
@@ -876,8 +953,14 @@ def main():
     # Conversation next, so its active text states receive input before the
     # generic text handler below can swallow it.
     app.add_handler(conv_handler)
-    # "Back to main" outside of any conversation.
-    app.add_handler(CallbackQueryHandler(handle_callback, pattern="^back_main$"))
+    # One-shot callbacks handled outside any conversation.
+    app.add_handler(CallbackQueryHandler(
+        handle_callback,
+        pattern="^(back_main|stray_photo_no|undo_confirm|undo_cancel)$"
+    ))
+    # A photo sent outside the deliberate Receipt Photo flow — offer to read it.
+    # Registered after the conversation so WAITING_FOR_RECEIPT still wins.
+    app.add_handler(MessageHandler(filters.PHOTO, handle_unexpected_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
